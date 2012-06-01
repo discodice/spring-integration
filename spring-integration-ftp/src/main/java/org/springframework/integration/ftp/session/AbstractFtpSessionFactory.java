@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2010 the original author or authors.
+ * Copyright 2002-2012 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ public abstract class AbstractFtpSessionFactory<T extends FTPClient> implements 
 
 	public static final String DEFAULT_REMOTE_WORKING_DIRECTORY = "/";
 
-	private final Log logger = LogFactory.getLog(this.getClass());
+	protected final Log logger = LogFactory.getLog(this.getClass());
 
 	protected FTPClientConfig config;
 
@@ -87,7 +87,7 @@ public abstract class AbstractFtpSessionFactory<T extends FTPClient> implements 
 		Assert.notNull(config);
 		this.config = config;
 	}
-	
+
 	public void setBufferSize(int bufferSize) {
 		this.bufferSize = bufferSize;
 	}
@@ -125,8 +125,8 @@ public abstract class AbstractFtpSessionFactory<T extends FTPClient> implements 
 	 * server's data port to initiate a transfer.
 	 */
 	public void setClientMode(int clientMode) {
-		Assert.isTrue(clientMode == FTPClient.ACTIVE_LOCAL_DATA_CONNECTION_MODE || 
-				clientMode == FTPClient.PASSIVE_LOCAL_DATA_CONNECTION_MODE, 
+		Assert.isTrue(clientMode == FTPClient.ACTIVE_LOCAL_DATA_CONNECTION_MODE ||
+				clientMode == FTPClient.PASSIVE_LOCAL_DATA_CONNECTION_MODE,
 				"Only local modes are supported. Was: " + clientMode);
 		this.clientMode = clientMode;
 	}
@@ -140,31 +140,58 @@ public abstract class AbstractFtpSessionFactory<T extends FTPClient> implements 
 		}
 	}
 
-	private T createClient() throws SocketException, IOException { 
+	/**
+	 *
+	 * @param client
+	 * @throws SocketException
+	 * @throws IOException
+	 */
+	protected void connectClient(T client) throws SocketException, IOException {
+		// Connect
+		client.connect(this.host, this.port);
+
+		if (!FTPReply.isPositiveCompletion(client.getReplyCode())) {
+			throw new MessagingException("Connecting to server [" +
+					host + ":" + port + "] failed. Please check the connection.");
+		}
+		logger.debug("Connected to server [" + this.host + ":" + this.port + "]: " + client.getReplyString());
+
+		// Login
+		if (!client.login(username, password)) {
+			throw new IllegalStateException("Login failed. The respponse from the server is: " +
+					client.getReplyString());
+		}
+		logger.debug("Logged on to server [" + this.host + ":" + this.port + "]: " + client.getReplyString());
+	}
+
+	protected abstract T createClientInstance();
+
+	/**
+	 * Will handle additional initialization after client.connect() method was invoked,
+	 * but before any action on the client has been taken
+	 */
+	protected void postProcessClientAfterConnect(T t) throws IOException {
+		// NOOP
+	}
+	/**
+	 * Will handle additional initialization before client.connect() method was invoked.
+	 */
+	protected void postProcessClientBeforeConnect(T client) throws IOException {
+		// NOOP
+	}
+
+	private T createClient() throws SocketException, IOException {
 		final T client = this.createClientInstance();
 		Assert.notNull(client, "client must not be null");
 		client.configure(this.config);
 		Assert.hasText(this.username, "username is required");
-		
+
 		this.postProcessClientBeforeConnect(client);
-		
-		// Connect
-		client.connect(this.host, this.port);
-		
-		if (!FTPReply.isPositiveCompletion(client.getReplyCode())) {
-			throw new MessagingException("Connecting to server [" +
-					host + ":" + port + "] failed. Please check the connection.");
-		}	
-		logger.debug("Connected to server [" + host + ":" + port + "]");
-		
-		// Login
-		if (!client.login(username, password)) {
-			throw new IllegalStateException("Login failed. The respponse from the server is: " + 
-					client.getReplyString());
-		}
-		
+
+		this.connectClient(client);
+
 		this.postProcessClientAfterConnect(client);
-		
+
 		this.updateClientMode(client);
 		client.setFileType(fileType);
 		client.setBufferSize(bufferSize);
@@ -186,22 +213,6 @@ public abstract class AbstractFtpSessionFactory<T extends FTPClient> implements 
 			default:
 				break;
 		}
-	}
-
-	protected abstract T createClientInstance();
-
-	/**
-	 * Will handle additional initialization after client.connect() method was invoked, 
-	 * but before any action on the client has been taken 
-	 */
-	protected void postProcessClientAfterConnect(T t) throws IOException {
-		// NOOP
-	}
-	/**
-	 * Will handle additional initialization before client.connect() method was invoked. 
-	 */
-	protected void postProcessClientBeforeConnect(T client) throws IOException {
-		// NOOP
 	}
 
 }

@@ -15,6 +15,10 @@
  */
 package org.springframework.integration.ftp.session;
 
+import static junit.framework.Assert.fail;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+
 import java.lang.reflect.Field;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
@@ -23,19 +27,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import junit.framework.Assert;
+
 import org.apache.commons.net.ftp.FTPClient;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.Mockito;
+
 import org.springframework.integration.MessagingException;
 import org.springframework.integration.file.remote.session.CachingSessionFactory;
 import org.springframework.integration.file.remote.session.Session;
 import org.springframework.integration.file.remote.session.SessionFactory;
 import org.springframework.integration.test.util.TestUtils;
-
-import static junit.framework.Assert.fail;
-
-import static org.junit.Assert.assertEquals;
 
 /**
  * @author Oleg Zhurakousky
@@ -84,20 +86,20 @@ public class SessionFactoryTests {
 				try {
 					int clientMode = field.getInt(null);
 					sessionFactory.setClientMode(clientMode);
-					if (!(clientMode == FTPClient.ACTIVE_LOCAL_DATA_CONNECTION_MODE || 
+					if (!(clientMode == FTPClient.ACTIVE_LOCAL_DATA_CONNECTION_MODE ||
 						clientMode == FTPClient.PASSIVE_LOCAL_DATA_CONNECTION_MODE)){
 						fail();
-					}	
+					}
 				} catch (IllegalArgumentException e) {
 					// success
 				} catch (Throwable e) {
 					fail();
 				}
 			}
-		}	
+		}
 	}
-	
-	
+
+
 	@Test
 	public void testStaleConnection() throws Exception{
 		SessionFactory sessionFactory = Mockito.mock(SessionFactory.class);
@@ -105,27 +107,27 @@ public class SessionFactoryTests {
 		Session sessionB = Mockito.mock(Session.class);
 		Mockito.when(sessionA.isOpen()).thenReturn(true);
 		Mockito.when(sessionB.isOpen()).thenReturn(false);
-		
+
 		Mockito.when(sessionFactory.getSession()).thenReturn(sessionA);
 		Mockito.when(sessionFactory.getSession()).thenReturn(sessionB);
-		
+
 		CachingSessionFactory cachingFactory = new CachingSessionFactory(sessionFactory, 2);
-		
+
 		Session firstSession = cachingFactory.getSession();
 		Session secondSession = cachingFactory.getSession();
 		secondSession.close();
 		Session nonStaleSession = cachingFactory.getSession();
 		assertEquals(TestUtils.getPropertyValue(firstSession, "targetSession"), TestUtils.getPropertyValue(nonStaleSession, "targetSession"));
 	}
-	
+
 	@Test
 	public void testSameSessionFromThePool() throws Exception{
 		SessionFactory sessionFactory = Mockito.mock(SessionFactory.class);
 		Session session = Mockito.mock(Session.class);
 		Mockito.when(sessionFactory.getSession()).thenReturn(session);
-		
+
 		CachingSessionFactory cachingFactory = new CachingSessionFactory(sessionFactory, 2);
-		
+
 		Session s1 = cachingFactory.getSession();
 		s1.close();
 		Session s2 = cachingFactory.getSession();
@@ -133,22 +135,52 @@ public class SessionFactoryTests {
 		assertEquals(TestUtils.getPropertyValue(s1, "targetSession"), TestUtils.getPropertyValue(s2, "targetSession"));
 		Mockito.verify(sessionFactory, Mockito.times(2)).getSession();
 	}
-	
+
 	@Test (expected=MessagingException.class) // timeout expire
 	public void testSessionWaitExpire() throws Exception{
 		SessionFactory sessionFactory = Mockito.mock(SessionFactory.class);
 		Session session = Mockito.mock(Session.class);
 		Mockito.when(sessionFactory.getSession()).thenReturn(session);
-		
+
 		CachingSessionFactory cachingFactory = new CachingSessionFactory(sessionFactory, 2);
 
 		cachingFactory.setSessionWaitTimeout(3000);
-		
+
 		cachingFactory.getSession();
 		cachingFactory.getSession();
 		cachingFactory.getSession();
 	}
-	
+
+	@Test
+	public void testInstantiationOfProxiedFtpSessionFactory() {
+		// expected success
+		new ProxiedFtpSessionFactory("foo.com", 2345);
+
+		// expected failure due to negative port
+		try {
+			new ProxiedFtpSessionFactory("foo.com", -1);
+			fail();
+		} catch (Exception e) {
+			assertTrue(e instanceof IllegalArgumentException);
+		}
+
+		// expected failure due to empty host
+		try {
+			new ProxiedFtpSessionFactory("", 2345);
+			fail();
+		} catch (Exception e) {
+			assertTrue(e instanceof IllegalArgumentException);
+		}
+
+		// expected failure due to null host
+		try {
+			new ProxiedFtpSessionFactory(null, 2345);
+			fail();
+		} catch (Exception e) {
+			assertTrue(e instanceof IllegalArgumentException);
+		}
+	}
+
 	@Test
 	@Ignore
 	public void testConnectionLimit() throws Exception{
@@ -162,8 +194,8 @@ public class SessionFactoryTests {
 		final Random random = new Random();
 		final AtomicInteger failures = new AtomicInteger();
 		for (int i = 0; i < 30; i++) {
-			executor.execute(new Runnable() {	
-				public void run() {		
+			executor.execute(new Runnable() {
+				public void run() {
 					try {
 						Session session = factory.getSession();
 						Thread.sleep(random.nextInt(5000));
