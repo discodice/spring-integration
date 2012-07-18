@@ -31,6 +31,7 @@ import javax.jms.TemporaryQueue;
 import javax.jms.TemporaryTopic;
 import javax.jms.Topic;
 
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.expression.Expression;
 import org.springframework.integration.Message;
 import org.springframework.integration.MessageChannel;
@@ -47,16 +48,21 @@ import org.springframework.jms.support.converter.SimpleMessageConverter;
 import org.springframework.jms.support.destination.DestinationResolver;
 import org.springframework.jms.support.destination.DynamicDestinationResolver;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 /**
  * An outbound Messaging Gateway for request/reply JMS.
- * 
+ *
  * @author Mark Fisher
  * @author Arjen Poutsma
  * @author Juergen Hoeller
  * @author Oleg Zhurakousky
  */
-public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
+public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler implements DisposableBean{
+
+	private final ThreadLocal<MessageConsumer> tempQueueConsumerCache = new ThreadLocal<MessageConsumer>();
+
+	private final String gatewayId = UUID.randomUUID().toString();
 
 	private volatile Destination requestDestination;
 
@@ -182,7 +188,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	 * Specify whether the request destination is a Topic. This value is
 	 * necessary when providing a destination name for a Topic rather than
 	 * a destination reference.
-	 * 
+	 *
 	 * @param requestPubSubDomain true if the request destination is a Topic
 	 */
 	public void setRequestPubSubDomain(boolean requestPubSubDomain) {
@@ -193,7 +199,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	 * Specify whether the reply destination is a Topic. This value is
 	 * necessary when providing a destination name for a Topic rather than
 	 * a destination reference.
-	 * 
+	 *
 	 * @param replyPubSubDomain true if the reply destination is a Topic
 	 */
 	public void setReplyPubSubDomain(boolean replyPubSubDomain) {
@@ -275,8 +281,8 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	}
 
 	/**
-	 * This property describes how a JMS Message should be generated from the 
-	 * Spring Integration Message. If set to 'true', the body of the JMS Message will be 
+	 * This property describes how a JMS Message should be generated from the
+	 * Spring Integration Message. If set to 'true', the body of the JMS Message will be
 	 * created from the Spring Integration Message's payload (via the MessageConverter).
 	 * If set to 'false', then the entire Spring Integration Message will serve as
 	 * the base for JMS Message creation. Since the JMS Message is created by the
@@ -284,7 +290,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	 * the entire Spring Integration Message or only its payload.
 	 * <br>
 	 * Default is 'true'
-	 * 
+	 *
 	 * @param extractRequestPayload
 	 */
 	public void setExtractRequestPayload(boolean extractRequestPayload) {
@@ -297,7 +303,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	 * created from the JMS Reply Message's body (via MessageConverter).
 	 * Otherwise, the entire JMS Message will become the payload of the
 	 * Spring Integration Message.
-	 * 
+	 *
 	 * @param extractReplyPayload
 	 */
 	public void setExtractReplyPayload(boolean extractReplyPayload) {
@@ -312,6 +318,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		this.setOutputChannel(replyChannel);
 	}
 
+	@Override
 	public String getComponentType() {
 		return "jms:outbound-gateway";
 	}
@@ -352,10 +359,25 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		if (this.replyDestinationName != null) {
 			Assert.notNull(this.destinationResolver,
 					"DestinationResolver is required when relying upon the 'replyDestinationName' property.");
-			return this.destinationResolver.resolveDestinationName(
+//			return this.destinationResolver.resolveDestinationName(
+//					session, this.replyDestinationName, this.replyPubSubDomain);
+			this.replyDestination = this.destinationResolver.resolveDestinationName(
 					session, this.replyDestinationName, this.replyPubSubDomain);
+			return this.replyDestination;
 		}
-		return session.createTemporaryQueue();
+		else {
+//			this.replyDestination = this.destinationResolver.resolveDestinationName(
+//					session, UUID.randomUUID().toString(), this.replyPubSubDomain);
+//			if (this.temporaryReplyDestination == null){
+//				this.temporaryReplyDestination = this.destinationResolver.resolveDestinationName(
+//						session, "queue_" + this.gatewayId, this.replyPubSubDomain);
+//			}
+//			return this.temporaryReplyDestination;
+			this.replyDestination = session.createTemporaryQueue();
+			return this.replyDestination;
+		}
+		//return session.createTemporaryQueue();
+
 	}
 
 	@Override
@@ -443,16 +465,17 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 				replyMessage = this.doSendAndReceiveWithGeneratedCorrelationId(requestDestination, jmsRequest, replyTo, session, priority);
 			}
 			else if (replyTo instanceof TemporaryQueue || replyTo instanceof TemporaryTopic) {
-				replyMessage = this.doSendAndReceiveWithTemporaryReplyToDestination(requestDestination, jmsRequest, replyTo, session, priority);
+//				replyMessage = this.doSendAndReceiveWithTemporaryReplyToDestination(requestDestination, jmsRequest, replyTo, session, priority);
+				replyMessage = this.doAutoCorrelatedSendAndReceive(requestDestination, jmsRequest, replyTo, session, priority);
 			}
 			else {
-				replyMessage = this.doSendAndReceiveWithMessageIdCorrelation(requestDestination, jmsRequest, replyTo, session, priority);
+				replyMessage = this.doAutoCorrelatedSendAndReceive(requestDestination, jmsRequest, replyTo, session, priority);
 			}
 			return replyMessage;
 		}
 		finally {
 			JmsUtils.closeSession(session);
-			this.deleteDestinationIfTemporary(replyTo);
+//			this.deleteDestinationIfTemporary(replyTo);
 			ConnectionFactoryUtils.releaseConnection(connection, this.connectionFactory, true);
 		}
 	}
@@ -487,50 +510,65 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		}
 	}
 
-	/**
-	 * Creates the MessageConsumer before sending the request Message since we do not need any correlation.
-	 */
-	private javax.jms.Message doSendAndReceiveWithTemporaryReplyToDestination(Destination requestDestination,
-			javax.jms.Message jmsRequest, Destination replyTo, Session session, int priority) throws JMSException {
-		MessageProducer messageProducer = null;
-		MessageConsumer messageConsumer = null;
-		try {
-			messageProducer = session.createProducer(requestDestination);
-			messageConsumer = session.createConsumer(replyTo);
-			this.sendRequestMessage(jmsRequest, messageProducer, priority);
-			return this.receiveReplyMessage(messageConsumer);
-		}
-		finally {
-			JmsUtils.closeMessageProducer(messageProducer);
-			JmsUtils.closeMessageConsumer(messageConsumer);
-		}
-	}
+//	/**
+//	 * Creates the MessageConsumer before sending the request Message since we do not need any correlation.
+//	 */
+//	private javax.jms.Message doSendAndReceiveWithTemporaryReplyToDestination(Destination requestDestination,
+//			javax.jms.Message jmsRequest, Destination replyTo, Session session, int priority) throws JMSException {
+//		MessageProducer messageProducer = null;
+//		MessageConsumer messageConsumer = tempQueueConsumerCache.get();
+//		try {
+//			messageProducer = session.createProducer(requestDestination);
+//			if (messageConsumer == null){
+//				messageConsumer = session.createConsumer(replyTo);
+//				tempQueueConsumerCache.set(messageConsumer);
+//			}
+//
+//			this.sendRequestMessage(jmsRequest, messageProducer, priority);
+//			String messageId = jmsRequest.getJMSMessageID();
+//			return this.receiveReplyMessage(messageConsumer);
+//		}
+//		finally {
+//			JmsUtils.closeMessageProducer(messageProducer);
+//			//JmsUtils.closeMessageConsumer(messageConsumer);
+//		}
+//	}
 
 	/**
 	 * Creates the MessageConsumer after sending the request Message since we need the MessageID for correlation with a MessageSelector.
 	 */
-	private javax.jms.Message doSendAndReceiveWithMessageIdCorrelation(Destination requestDestination,
+	private javax.jms.Message doAutoCorrelatedSendAndReceive(Destination requestDestination,
 			javax.jms.Message jmsRequest, Destination replyTo, Session session, int priority) throws JMSException {
 		if (replyTo instanceof Topic && logger.isWarnEnabled()) {
 			logger.warn("Relying on the MessageID for correlation is not recommended when using a Topic as the replyTo Destination " +
 					"because that ID can only be provided to a MessageSelector after the reuqest Message has been sent thereby " +
 					"creating a race condition where a fast response might be sent before the MessageConsumer has been created. " +
 					"Consider providing a value to the 'correlationKey' property of this gateway instead. Then the MessageConsumer " +
-					"will be created before the request Message is sent."); 
+					"will be created before the request Message is sent.");
 		}
 		MessageProducer messageProducer = null;
-		MessageConsumer messageConsumer = null;
+		//MessageConsumer messageConsumer = null;
+		MessageConsumer messageConsumer = tempQueueConsumerCache.get();
+		String consumerCorrelationId = Thread.currentThread().getId() + "_" + gatewayId;
 		try {
-			messageProducer = session.createProducer(requestDestination);
+			messageProducer = session.createProducer(requestDestination);;
+			jmsRequest.setStringProperty("consumerCorrelationId", consumerCorrelationId);
 			this.sendRequestMessage(jmsRequest, messageProducer, priority);
-			String messageId = jmsRequest.getJMSMessageID().replaceAll("'", "''");
-			String messageSelector = "JMSCorrelationID = '" + messageId + "'";
-			messageConsumer = session.createConsumer(replyTo, messageSelector);
-			return this.receiveReplyMessage(messageConsumer);
+			String messageId = jmsRequest.getJMSMessageID();
+
+			//messageConsumer = session.createConsumer(replyTo, messageSelector);
+			if (messageConsumer == null){
+				String messageSelector = "consumerCorrelationId = '" + consumerCorrelationId + "'";
+				messageConsumer = session.createConsumer(replyTo, messageSelector);
+				tempQueueConsumerCache.set(messageConsumer);
+			}
+			return this.receiveReplyMessageCorrelated(messageConsumer, messageId);
 		}
 		finally {
 			JmsUtils.closeMessageProducer(messageProducer);
-			JmsUtils.closeMessageConsumer(messageConsumer);
+			if (!(replyTo instanceof TemporaryQueue)){
+				JmsUtils.closeMessageConsumer(messageConsumer);
+			}
 		}
 	}
 
@@ -547,24 +585,38 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		return (this.receiveTimeout >= 0) ? messageConsumer.receive(receiveTimeout) : messageConsumer.receive();
 	}
 
-	/**
-	 * Deletes either a {@link TemporaryQueue} or {@link TemporaryTopic}.
-	 * Ignores any other {@link Destination} type and also ignores any
-	 * {@link JMSException}s that may be thrown when attempting to delete.
-	 */
-	private void deleteDestinationIfTemporary(Destination destination) {
-		try {
-			if (destination instanceof TemporaryQueue) { 
-				((TemporaryQueue) destination).delete();
+	private javax.jms.Message receiveReplyMessageCorrelated(MessageConsumer messageConsumer, String originalReplyCorrelationId) throws JMSException {
+		javax.jms.Message replyMessage = (this.receiveTimeout >= 0) ? messageConsumer.receive(receiveTimeout) : messageConsumer.receive();
+		if (replyMessage != null){
+			String replyCorrelationId = replyMessage.getStringProperty("replyCorrelationId");
+			if (StringUtils.hasText(replyCorrelationId) && originalReplyCorrelationId.equals(replyCorrelationId)){
+				return replyMessage;
 			}
-			else if (destination instanceof TemporaryTopic) {
-				((TemporaryTopic) destination).delete();
+			else {
+				return this.receiveReplyMessageCorrelated(messageConsumer, originalReplyCorrelationId);
 			}
 		}
-		catch (JMSException e) {
-			// ignore
-		}
+		return null;
 	}
+
+//	/**
+//	 * Deletes either a {@link TemporaryQueue} or {@link TemporaryTopic}.
+//	 * Ignores any other {@link Destination} type and also ignores any
+//	 * {@link JMSException}s that may be thrown when attempting to delete.
+//	 */
+//	private void deleteDestinationIfTemporary(Destination destination) {
+//		try {
+//			if (destination instanceof TemporaryQueue) {
+//				((TemporaryQueue) destination).delete();
+//			}
+//			else if (destination instanceof TemporaryTopic) {
+//				((TemporaryTopic) destination).delete();
+//			}
+//		}
+//		catch (JMSException e) {
+//			// ignore
+//		}
+//	}
 
 	/**
 	 * Create a new JMS Connection for this JMS gateway.
@@ -578,6 +630,10 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	 */
 	protected Session createSession(Connection connection) throws JMSException {
 		return connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+	}
+
+	public void destroy() throws Exception {
+		//JmsUtils.
 	}
 
 }
