@@ -11,15 +11,19 @@
 		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
 		http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.1.xsd">
 
+	<context:property-placeholder />
+
 	<int:gateway default-request-channel="pipeline01" default-request-timeout="10000" default-reply-timeout="10000"/>
 
 	<int-jms:outbound-gateway request-channel="pipeline01"
+		id="out-1-1"
 	    connection-factory="connectionFactory" 
 	    reply-destination-name="pipeline01-01"
-		request-destination-name="siOutQueue"/>
+		request-destination-name="${siOutQueue}"/>
 	
 	<int-jms:inbound-gateway request-channel="jmsIn"
-		request-destination-name="siOutQueue"
+		id="in-1-1"
+		request-destination-name="${siOutQueue}"
 		connection-factory="connectionFactory"
 		concurrent-consumers="10"
 		reply-timeout="10000"/>
@@ -33,11 +37,13 @@
 	</int:chain>
 	
 	<int-jms:outbound-gateway request-channel="anotherGatewayChannel"
+		id="out-1-2"
 	    connection-factory="connectionFactory" 
-		request-destination-name="anotherGatewayQueue"/>
+		request-destination-name="${anotherGatewayQueue}"/>
 		
 	<int-jms:inbound-gateway request-channel="anotherIn"
-		request-destination-name="anotherGatewayQueue"
+		id="in-1-2"
+		request-destination-name="${anotherGatewayQueue}"
 		connection-factory="connectionFactory"
 		concurrent-consumers="10"
 		reply-timeout="10000"/>
@@ -48,7 +54,7 @@
 		class="org.springframework.jms.connection.CachingConnectionFactory">
 		<property name="targetConnectionFactory">
 			<bean class="org.apache.activemq.ActiveMQConnectionFactory">
-				<property name="brokerURL" value="vm://localhost"/>
+				<property name="brokerURL" value="vm://localhost?broker.persistent=false"/>
 			</bean>
 		</property>
 		<property name="sessionCacheSize" value="10"/>

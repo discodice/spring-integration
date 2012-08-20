@@ -21,6 +21,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.jms.Connection;
 import javax.jms.ConnectionFactory;
@@ -53,7 +54,6 @@ import org.springframework.jms.support.converter.SimpleMessageConverter;
 import org.springframework.jms.support.destination.DestinationResolver;
 import org.springframework.jms.support.destination.DynamicDestinationResolver;
 import org.springframework.util.Assert;
-import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
 
 /**
@@ -63,6 +63,7 @@ import org.springframework.util.StringUtils;
  * @author Arjen Poutsma
  * @author Juergen Hoeller
  * @author Oleg Zhurakousky
+ * @author Gary Russell
  */
 public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 
@@ -118,6 +119,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 
 	private final Object initializationMonitor = new Object();
 
+	private final AtomicLong messageIdCounter = new AtomicLong();
 
 	/**
 	 * Set whether message delivery should be persistent or non-persistent,
@@ -570,7 +572,8 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	private javax.jms.Message exchangeWithCorrelationKey(MessageProducer messageProducer, javax.jms.Message jmsRequest,
 			Session session, long sessionId, Destination replyTo, int priority) throws JMSException {
 
-		String messageCorrelationId = ObjectUtils.getIdentityHexString(jmsRequest);
+		long counter = messageIdCounter.incrementAndGet();
+		String messageCorrelationId = String.valueOf(counter);
 
 		String consumerCorrelationId = gatewayId + "_" + sessionId;
 

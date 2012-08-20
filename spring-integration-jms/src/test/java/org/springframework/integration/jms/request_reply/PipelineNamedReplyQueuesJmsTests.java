@@ -138,7 +138,11 @@ public class PipelineNamedReplyQueuesJmsTests {
 		test(contextConfig, 0);
 	}
 
-	public void test(String contextConfig, final int offset) throws Exception {
+	public void test(final String contextConfig, final int offset) throws Exception {
+		System.setProperty("siOutQueue", contextConfig + ".siOutQueue");
+		System.setProperty("anotherGatewayQueue", contextConfig + ".anotherGatewayQueue");
+		System.setProperty("thirdGatewayQueue", contextConfig + ".thirdGatewayQueue");
+		System.out.println(contextConfig);
 		this.timeouts = 0;
 		ActiveMqTestUtils.prepare();
 		ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext(contextConfig, this.getClass());
@@ -158,7 +162,7 @@ public class PipelineNamedReplyQueuesJmsTests {
 					} catch (MessageTimeoutException e) {
 						timeoutCounter.incrementAndGet();
 					} catch (Throwable t) {
-						t.printStackTrace();
+						new RuntimeException(contextConfig, t).printStackTrace();
 						failureCounter.incrementAndGet();
 					} finally {
 						latch.countDown();
@@ -166,16 +170,20 @@ public class PipelineNamedReplyQueuesJmsTests {
 				}
 			});
 		}
-		assertTrue(latch.await(60, TimeUnit.SECONDS));
-		System.out.println("Success: " + successCounter.get());
-		System.out.println("Timeout: " + timeoutCounter.get());
-		System.out.println("Failure: " + failureCounter.get());
-		// technically all we care that its > 0,
-		// but reality of this test it has to be something more then 0
-		assertTrue(successCounter.get() > 10);
-		assertEquals(0, failureCounter.get());
-		assertEquals(requests, successCounter.get() + timeoutCounter.get());
-		this.timeouts = timeoutCounter.get();
-		context.destroy();
+		try {
+			assertTrue(latch.await(60, TimeUnit.SECONDS));
+			System.out.println("Success: " + successCounter.get());
+			System.out.println("Timeout: " + timeoutCounter.get());
+			System.out.println("Failure: " + failureCounter.get());
+			// technically all we care that its > 0,
+			// but reality of this test it has to be something more then 0
+			assertTrue(successCounter.get() > 10);
+			assertEquals(0, failureCounter.get());
+			assertEquals(requests, successCounter.get() + timeoutCounter.get());
+			this.timeouts = timeoutCounter.get();
+		}
+		finally {
+			context.destroy();
+		}
 	}
 }

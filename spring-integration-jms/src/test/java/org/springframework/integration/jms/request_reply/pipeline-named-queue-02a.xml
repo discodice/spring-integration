@@ -11,18 +11,23 @@
 		http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
 		http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.1.xsd">
 
+	<context:property-placeholder />
+
 	<int:gateway default-request-channel="pipeline02" default-request-timeout="10000" default-reply-timeout="10000"/>
 
 	<int-jms:outbound-gateway request-channel="pipeline02"
+		id="out-2a-1"
 	    connection-factory="connectionFactory" 
 	    reply-destination-name="pipeline02a-01"
-		request-destination-name="siOutQueue"/>
+	    receive-timeout="20000"
+		request-destination-name="${siOutQueue}"/>
 	
 	<int-jms:inbound-gateway request-channel="jmsIn"
-		request-destination-name="siOutQueue"
+		id="in-2a-1"
+		request-destination-name="${siOutQueue}"
 		connection-factory="connectionFactory"
 		concurrent-consumers="10"
-		reply-timeout="10000"/>
+		reply-timeout="20000"/>
 
 	<int:chain input-channel="jmsIn" output-channel="anotherGatewayChannel">
 		<int:header-enricher>
@@ -33,12 +38,15 @@
 	</int:chain>
 	
 	<int-jms:outbound-gateway request-channel="anotherGatewayChannel"
+		id="out-2a-2"
 	    connection-factory="connectionFactory" 
 	    reply-destination-name="pipeline02a-01"
-		request-destination-name="anotherGatewayQueue"/>
+	    receive-timeout="20000"
+		request-destination-name="${anotherGatewayQueue}"/>
 		
 	<int-jms:inbound-gateway request-channel="anotherIn"
-		request-destination-name="anotherGatewayQueue"
+		id="in-2a-2"
+		request-destination-name="${anotherGatewayQueue}"
 		connection-factory="connectionFactory"
 		concurrent-consumers="10"
 		reply-timeout="10000"/>
@@ -46,12 +54,15 @@
 	<int:transformer input-channel="anotherIn" expression="payload" output-channel="toThird" />
 
 	<int-jms:outbound-gateway request-channel="toThird"
+		id="out-2a-3"
 	    connection-factory="connectionFactory" 
 	    reply-destination-name="pipeline02a-01"
-		request-destination-name="thirdGatewayQueue"/>
+	    receive-timeout="10000"
+		request-destination-name="${thirdGatewayQueue}"/>
 		
 	<int-jms:inbound-gateway request-channel="thirdIn"
-		request-destination-name="thirdGatewayQueue"
+		id="in-2a-3"
+		request-destination-name="${thirdGatewayQueue}"
 		connection-factory="connectionFactory"
 		concurrent-consumers="10"
 		reply-timeout="10000"/>
@@ -62,7 +73,7 @@
 		class="org.springframework.jms.connection.CachingConnectionFactory">
 		<property name="targetConnectionFactory">
 			<bean class="org.apache.activemq.ActiveMQConnectionFactory">
-				<property name="brokerURL" value="vm://localhost"/>
+				<property name="brokerURL" value="vm://localhost?broker.persistent=false"/>
 			</bean>
 		</property>
 		<property name="sessionCacheSize" value="10"/>
