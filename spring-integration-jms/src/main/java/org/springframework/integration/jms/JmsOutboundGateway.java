@@ -21,7 +21,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.jms.Connection;
@@ -76,7 +75,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 
 	private volatile boolean replyDestinationExplicitlySet;
 
-	private final Map<Long, Destination> tempQueuePerSessionMap = new HashMap<Long, Destination>(10);
+	private final Map<Session, Destination> tempQueuePerSessionMap = new HashMap<Session, Destination>(10);
 
 	private volatile Destination requestDestination;
 
@@ -464,7 +463,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 				session, requestDestinationName, this.requestPubSubDomain);
 	}
 
-	private Destination determineReplyDestination(Session session, long sessionId) throws JMSException {
+	private Destination determineReplyDestination(Session session) throws JMSException {
 
 		Destination replyDestinationToReturn = this.replyDestination;
 
@@ -475,8 +474,8 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 				replyDestinationToReturn = this.destinationResolver.resolveDestinationName(
 						session, this.replyDestinationName, this.replyPubSubDomain);
 			}
-			else if (this.tempQueuePerSessionMap.containsKey(sessionId)){
-				replyDestinationToReturn = this.tempQueuePerSessionMap.get(sessionId);
+			else if (this.tempQueuePerSessionMap.containsKey(session)){
+				replyDestinationToReturn = this.tempQueuePerSessionMap.get(session);
 			}
 			else if (this.cachedConsumers){
 				if (StringUtils.hasText(this.correlationKey)){
@@ -487,7 +486,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 				}
 				else {
 					replyDestinationToReturn = session.createTemporaryQueue();
-					this.tempQueuePerSessionMap.put(sessionId, replyDestinationToReturn);
+					this.tempQueuePerSessionMap.put(session, replyDestinationToReturn);
 				}
 			}
 			else {
@@ -498,23 +497,15 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		return replyDestinationToReturn;
 	}
 
-private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
-
 
 	private javax.jms.Message sendAndReceive(Message<?> requestMessage) throws JMSException {
 		Connection connection = this.createConnection();
 		Session session = null;
 		Destination replyTo = null;
-		long sessionId = 0;
+//		long sessionId = 0;
 		try {
 			session = this.createSession(connection);
-			sessionId = System.identityHashCode(session);
 
-			Session sess = sessionIds.get(sessionId);
-			if (sess != null) {
-				System.out.println("EEEEK " + session + "/" + sess);
-			}
-			sessionIds.put(sessionId, session);
 			// convert to JMS Message
 			Object objectToSend = requestMessage;
 			if (this.extractRequestPayload) {
@@ -526,7 +517,7 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 			headerMapper.fromHeaders(requestMessage.getHeaders(), jmsRequest);
 
 			// TODO: support a JmsReplyTo header in the SI Message?
-			replyTo = this.determineReplyDestination(session, sessionId);
+			replyTo = this.determineReplyDestination(session);
 
 			connection.start();
 
@@ -537,7 +528,7 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 
 			Destination requestDestinationToUse = this.determineRequestDestination(requestMessage, session);
 
-			javax.jms.Message replyMessage = this.doSendAndReceive(requestDestinationToUse, jmsRequest, replyTo, session, priority, sessionId);
+			javax.jms.Message replyMessage = this.doSendAndReceive(requestDestinationToUse, jmsRequest, replyTo, session, priority);
 
 			return replyMessage;
 		}
@@ -549,11 +540,10 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 				!this.isCachedSession(session)) {
 
 				this.deleteDestinationIfTemporary(replyTo);
-				this.tempQueuePerSessionMap.remove(sessionId);
+				this.tempQueuePerSessionMap.remove(session);
 			}
 
 			ConnectionFactoryUtils.releaseConnection(connection, this.connectionFactory, true);
-			sessionIds.remove(sessionId);
 		}
 	}
 
@@ -561,16 +551,16 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 	 * Creates the MessageConsumer after sending the request Message since we need the MessageID for correlation with a MessageSelector.
 	 */
 	private javax.jms.Message doSendAndReceive(Destination requestDestinationToUse,
-			javax.jms.Message jmsRequest, Destination replyTo, Session session, int priority, long sessionId) throws JMSException {
+			javax.jms.Message jmsRequest, Destination replyTo, Session session, int priority) throws JMSException {
 
 		MessageProducer messageProducer = session.createProducer(requestDestinationToUse);
 		jmsRequest.setJMSReplyTo(replyTo);
 		try {
 			if (StringUtils.hasText(this.correlationKey)){
-				return this.exchangeWithCorrelationKey(messageProducer, jmsRequest, session, sessionId, replyTo, priority);
+				return this.exchangeWithCorrelationKey(messageProducer, jmsRequest, session, replyTo, priority);
 			}
 			else {
-				return this.exchangeWithoutCorrelationKey(messageProducer, jmsRequest, session, sessionId, replyTo, priority);
+				return this.exchangeWithoutCorrelationKey(messageProducer, jmsRequest, session, replyTo, priority);
 			}
 		}
 		finally {
@@ -579,12 +569,14 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 	}
 
 	private javax.jms.Message exchangeWithCorrelationKey(MessageProducer messageProducer, javax.jms.Message jmsRequest,
-			Session session, long sessionId, Destination replyTo, int priority) throws JMSException {
+			Session session, Destination replyTo, int priority) throws JMSException {
 
 		long counter = messageIdCounter.incrementAndGet();
 		String messageCorrelationId = String.valueOf(counter);
 
-		String consumerCorrelationId = gatewayId + "_" + sessionId;
+
+		String consumerCorrelationId = gatewayId + "-" + counter + "-";
+		//System.out.println(consumerCorrelationId);
 
 		if (this.correlationKey.equals("JMSCorrelationID")) {
 			jmsRequest.setJMSCorrelationID(consumerCorrelationId + "$" + messageCorrelationId);
@@ -596,15 +588,16 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 		logger.debug("Sending: " + consumerCorrelationId + "$" + messageCorrelationId);
 
 		String messageSelector = correlationKey + " LIKE '" + consumerCorrelationId + "%'";
+		//System.out.println(messageSelector);
 
 		MessageConsumer messageConsumer = null;
 
 		try {
-			messageConsumer = this.createMessageConsumer(session, replyTo, messageSelector, sessionId);
+			messageConsumer = this.createMessageConsumer(session, replyTo, messageSelector);
 
 			this.sendRequestMessage(jmsRequest, messageProducer, priority);
 
-			return this.doReceive(messageConsumer, this.correlationKey, messageCorrelationId, sessionId);
+			return this.doReceive(messageConsumer, this.correlationKey, messageCorrelationId, session);
 		}
 		finally  {
 			JmsUtils.closeMessageConsumer(messageConsumer);
@@ -612,7 +605,7 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 	}
 
 	private javax.jms.Message exchangeWithoutCorrelationKey(MessageProducer messageProducer, javax.jms.Message jmsRequest,
-			Session session, long sessionId, Destination replyTo, int priority) throws JMSException {
+			Session session, Destination replyTo, int priority) throws JMSException {
 
 		MessageConsumer messageConsumer = null;
 		try {
@@ -641,15 +634,15 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 
 				messageCorrelationId = jmsRequest.getJMSMessageID().replaceAll("'", "''");
 				String messageSelector = "JMSCorrelationID = '" + messageCorrelationId + "'";
-				messageConsumer = this.createMessageConsumer(session, replyTo, messageSelector, sessionId);
+				messageConsumer = this.createMessageConsumer(session, replyTo, messageSelector);
 			}
 			else {
-				messageConsumer = this.createMessageConsumer(session, replyTo, null, sessionId);
+				messageConsumer = this.createMessageConsumer(session, replyTo, null);
 				this.sendRequestMessage(jmsRequest, messageProducer, priority);
 				messageCorrelationId = jmsRequest.getJMSMessageID().replaceAll("'", "''");
 			}
 
-			return this.doReceive(messageConsumer, null, messageCorrelationId, sessionId);
+			return this.doReceive(messageConsumer, null, messageCorrelationId, session);
 		}
 		finally  {
 			JmsUtils.closeMessageConsumer(messageConsumer);
@@ -660,12 +653,12 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 	 * Will perform clean up if failures detected during message receive
 	 */
 	private javax.jms.Message doReceive(MessageConsumer messageConsumer, String correlationKey, String messageCorrelationIdToMatch,
-			long sessionId) throws JMSException{
+			Session session) throws JMSException{
 		try {
 			return this.receiveCorrelatedReplyMessage(messageConsumer, correlationKey, messageCorrelationIdToMatch);
 		}
 		catch (javax.jms.IllegalStateException e) {
-			this.clearDestination(sessionId);
+			this.clearDestination(session);
 			throw e;
 		}
 	}
@@ -687,6 +680,7 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 				replyFound = checkReplyMessage(correlationKey, messageCorrelationIdToMatch, replyMessage);
 				if (!replyFound) {
 					timeLeft -= (System.currentTimeMillis() - startTime);
+					System.out.println("################ Discarding reply: " + messageConsumer.getMessageSelector() + " - " + replyMessage.getJMSCorrelationID() + " - " + messageCorrelationIdToMatch);
 				}
 				else {
 					replyMessage.setJMSCorrelationID(null);
@@ -737,7 +731,7 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 		return replyFound;
 	}
 
-	private MessageConsumer createMessageConsumer(Session session, Destination replyTo, String messageSelector, long sessionId) throws JMSException{
+	private MessageConsumer createMessageConsumer(Session session, Destination replyTo, String messageSelector) throws JMSException{
 		MessageConsumer consumer;
 		try {
 			if (this.cachedConsumers && this.isTemporaryDestination(replyTo)){
@@ -758,7 +752,7 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 			}
 		}
 		catch (InvalidDestinationException e) {
-			this.clearDestination(sessionId);
+			this.clearDestination(session);
 			throw e;
 		}
 		return consumer;
@@ -796,9 +790,9 @@ private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
 	 * Will clear reply destination *only* if such reply destination is temporary
 	 * and was created internally
 	 */
-	private void clearDestination(long sessionId){
-		if (this.tempQueuePerSessionMap.containsKey(sessionId)){
-			this.tempQueuePerSessionMap.remove(sessionId);
+	private void clearDestination(Session session){
+		if (this.tempQueuePerSessionMap.containsKey(session)){
+			this.tempQueuePerSessionMap.remove(session);
 		}
 		else if (this.isTemporaryDestination(this.replyDestination) && !this.replyDestinationExplicitlySet){
 			this.replyDestination = null;

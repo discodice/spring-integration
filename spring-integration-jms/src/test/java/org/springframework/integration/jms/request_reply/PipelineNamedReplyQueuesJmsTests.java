@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Test;
+
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 import org.springframework.integration.MessageTimeoutException;
 import org.springframework.integration.gateway.RequestReplyExchanger;
@@ -96,7 +97,7 @@ public class PipelineNamedReplyQueuesJmsTests {
 	public void testPipeline3a() throws Exception{
 for (int i = 0; i < 2000; i++) {
 		this.test("pipeline-named-queue-03a.xml", 20000);
-//		assertEquals(0, this.timeouts);
+		assertEquals(0, this.timeouts);
 }
 	}
 
