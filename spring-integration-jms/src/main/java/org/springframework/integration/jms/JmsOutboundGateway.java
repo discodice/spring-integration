@@ -21,6 +21,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.jms.Connection;
@@ -497,6 +498,9 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		return replyDestinationToReturn;
 	}
 
+private Map<Long, Session> sessionIds = new ConcurrentHashMap<Long, Session>();
+
+
 	private javax.jms.Message sendAndReceive(Message<?> requestMessage) throws JMSException {
 		Connection connection = this.createConnection();
 		Session session = null;
@@ -506,6 +510,11 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 			session = this.createSession(connection);
 			sessionId = System.identityHashCode(session);
 
+			Session sess = sessionIds.get(sessionId);
+			if (sess != null) {
+				System.out.println("EEEEK " + session + "/" + sess);
+			}
+			sessionIds.put(sessionId, session);
 			// convert to JMS Message
 			Object objectToSend = requestMessage;
 			if (this.extractRequestPayload) {
@@ -544,6 +553,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 			}
 
 			ConnectionFactoryUtils.releaseConnection(connection, this.connectionFactory, true);
+			sessionIds.remove(sessionId);
 		}
 	}
 
@@ -568,7 +578,6 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		}
 	}
 
-
 	private javax.jms.Message exchangeWithCorrelationKey(MessageProducer messageProducer, javax.jms.Message jmsRequest,
 			Session session, long sessionId, Destination replyTo, int priority) throws JMSException {
 
@@ -583,6 +592,8 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		else {
 			jmsRequest.setStringProperty(correlationKey, consumerCorrelationId + "$" + messageCorrelationId);
 		}
+
+		logger.debug("Sending: " + consumerCorrelationId + "$" + messageCorrelationId);
 
 		String messageSelector = correlationKey + " LIKE '" + consumerCorrelationId + "%'";
 
@@ -714,7 +725,8 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 				// the next one since we can no longer communicate with its originating producer
 				// since it has already timed out waiting for the reply. We are also honoring the original timeout
 				if (this.logger.isDebugEnabled()){
-					this.logger.debug("Discarded late arriving reply: " + replyMessage);
+					this.logger.debug("Discarded late arriving reply: " + replyMessage +
+							", expecting:"  + messageCorrelationIdToMatch);
 				}
 				replyFound = false;
 			}
