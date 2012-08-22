@@ -21,6 +21,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.jms.Connection;
@@ -55,6 +57,8 @@ import org.springframework.jms.support.destination.DestinationResolver;
 import org.springframework.jms.support.destination.DynamicDestinationResolver;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+
+import scala.actors.threadpool.Arrays;
 
 /**
  * An outbound Messaging Gateway for request/reply JMS.
@@ -120,6 +124,9 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 	private final Object initializationMonitor = new Object();
 
 	private final AtomicLong messageIdCounter = new AtomicLong();
+
+	private final ConcurrentHashMap<Integer, LinkedBlockingQueue<Integer>> correlationIdPool =
+			new ConcurrentHashMap<Integer, LinkedBlockingQueue<Integer>>();
 
 	/**
 	 * Set whether message delivery should be persistent or non-persistent,
@@ -497,14 +504,34 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		return replyDestinationToReturn;
 	}
 
+	@SuppressWarnings("unchecked")
+	private void setUpCorrelationIdPool(Session session){
+		int sessionHash = System.identityHashCode(session);
+		if (!this.correlationIdPool.contains(sessionHash)){
+			LinkedBlockingQueue<Integer> poolOfIdSuffixes = new LinkedBlockingQueue<Integer>();
+			poolOfIdSuffixes.addAll(Arrays.asList(new Integer[]{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}));
+			this.correlationIdPool.put(sessionHash, poolOfIdSuffixes);
+		}
+	}
 
 	private javax.jms.Message sendAndReceive(Message<?> requestMessage) throws JMSException {
 		Connection connection = this.createConnection();
 		Session session = null;
 		Destination replyTo = null;
-//		long sessionId = 0;
+
 		try {
 			session = this.createSession(connection);
+			/*
+			 * Creates a pool of additional IDs per session identity (System.identityHash)
+			 * This additional ID will be used together with session identity
+			 * while creating a selector expression. It ensures that if session identity happens
+			 * to match the session identity of the previously created session, there is always
+			 * an additional discriminator.
+			 *
+			 */
+			synchronized (this) {
+				this.setUpCorrelationIdPool(session);
+			}
 
 			// convert to JMS Message
 			Object objectToSend = requestMessage;
@@ -539,6 +566,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 				this.isTemporaryDestination(replyTo) &&
 				!this.isCachedSession(session)) {
 
+				this.correlationIdPool.remove(System.identityHashCode(session));
 				this.deleteDestinationIfTemporary(replyTo);
 				this.tempQueuePerSessionMap.remove(session);
 			}
@@ -574,9 +602,10 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		long counter = messageIdCounter.incrementAndGet();
 		String messageCorrelationId = String.valueOf(counter);
 
+		int sessionHash = System.identityHashCode(session);
+		int id = this.correlationIdPool.get(sessionHash).poll();
 
-		String consumerCorrelationId = gatewayId + "-" + counter + "-";
-		//System.out.println(consumerCorrelationId);
+		String consumerCorrelationId = gatewayId + "-" + sessionHash + "-" + id + "-";
 
 		if (this.correlationKey.equals("JMSCorrelationID")) {
 			jmsRequest.setJMSCorrelationID(consumerCorrelationId + "$" + messageCorrelationId);
@@ -588,7 +617,6 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		logger.debug("Sending: " + consumerCorrelationId + "$" + messageCorrelationId);
 
 		String messageSelector = correlationKey + " LIKE '" + consumerCorrelationId + "%'";
-		//System.out.println(messageSelector);
 
 		MessageConsumer messageConsumer = null;
 
@@ -601,6 +629,7 @@ public class JmsOutboundGateway extends AbstractReplyProducingMessageHandler {
 		}
 		finally  {
 			JmsUtils.closeMessageConsumer(messageConsumer);
+			this.correlationIdPool.get(sessionHash).offer(id);
 		}
 	}
 
