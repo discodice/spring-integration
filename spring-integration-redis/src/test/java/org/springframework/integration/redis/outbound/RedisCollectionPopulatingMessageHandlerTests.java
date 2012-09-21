@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.junit.Test;
+
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.jedis.JedisConnectionFactory;
 import org.springframework.data.redis.core.RedisOperations;
@@ -151,7 +152,7 @@ public class RedisCollectionPopulatingMessageHandlerTests extends RedisAvailable
 	@SuppressWarnings("unchecked")
 	@Test
 	@RedisAvailable
-	public void testZsetWithListPayloadParsedAndProvidedKeyDefaultScoreIncrement() {
+	public void testZsetWithListPayloadParsedAndProvidedKeyDefault() {
 		JedisConnectionFactory jcf = this.getConnectionFactoryForTest();
 		String key = "foo";
 		RedisZSet<String> redisZset =
@@ -182,16 +183,16 @@ public class RedisCollectionPopulatingMessageHandlerTests extends RedisAvailable
 		handler.handleMessage(message);
 		assertEquals(3, redisZset.size());
 		pepboys = redisZset.rangeByScoreWithScores(1, 2);
-		// should have incremented
+		// should not have incremented
 		for (TypedTuple<String> pepboy : pepboys) {
-			assertTrue(pepboy.getScore() == 2);
+			assertTrue(pepboy.getScore() == 1);
 		}
 	}
 
 	@SuppressWarnings("unchecked")
 	@Test
 	@RedisAvailable
-	public void testZsetWithListPayloadParsedAndProvidedKeyDefaultScoreOverWrite() {
+	public void testZsetWithListPayloadParsedAndProvidedKeyScoreIncrement() {
 		JedisConnectionFactory jcf = this.getConnectionFactoryForTest();
 		String key = "foo";
 		RedisZSet<String> redisZset =
@@ -211,7 +212,7 @@ public class RedisCollectionPopulatingMessageHandlerTests extends RedisAvailable
 		list.add("Moe");
 		list.add("Jack");
 		Message<List<String>> message = MessageBuilder.withPayload(list)
-				.setHeader(RedisHeaders.ZSET_OVERWRITE_IF_PRESENT, Boolean.TRUE)
+				.setHeader(RedisHeaders.ZSET_INCREMENT_SCORE, Boolean.TRUE)
 				.build();
 
 		handler.handleMessage(message);
@@ -225,9 +226,9 @@ public class RedisCollectionPopulatingMessageHandlerTests extends RedisAvailable
 		handler.handleMessage(message);
 		assertEquals(3, redisZset.size());
 		pepboys = redisZset.rangeByScoreWithScores(1, 2);
-		// should NOT have incremented
+		// should have incremented
 		for (TypedTuple<String> pepboy : pepboys) {
-			assertTrue(pepboy.getScore() == 1);
+			assertTrue(pepboy.getScore() == 2);
 		}
 	}
 

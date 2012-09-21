@@ -5,6 +5,7 @@ package org.springframework.integration.redis.support;
  * for dealing with headers required by Redis components
  *
  * @author Oleg Zhurakousky
+ * @author Gary Russell
  * @since 2.2
  */
 public class RedisHeaders {
@@ -17,6 +18,6 @@ public class RedisHeaders {
 
 	public static final String ZSET_SCORE = PREFIX + "zsetScore";
 
-	public static final String ZSET_OVERWRITE_IF_PRESENT = PREFIX + "zsetOverwrite";
+	public static final String ZSET_INCREMENT_SCORE = PREFIX + "zsetIncrementScore";
 
 }

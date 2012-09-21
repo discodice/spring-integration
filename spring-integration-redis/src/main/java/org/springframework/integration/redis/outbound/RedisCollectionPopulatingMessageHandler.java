@@ -22,6 +22,7 @@ import java.util.Properties;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.BoundSetOperations;
@@ -321,7 +322,7 @@ public class RedisCollectionPopulatingMessageHandler extends AbstractMessageHand
 		final Object payload = message.getPayload();
 		final BoundZSetOperations<String, Object> ops =
 				(BoundZSetOperations<String, Object>) this.redisTemplate.boundZSetOps(zset.getKey());
-		final Object overWriteHeader = message.getHeaders().get(RedisHeaders.ZSET_OVERWRITE_IF_PRESENT);
+		final Object zsetIncrementHeader = message.getHeaders().get(RedisHeaders.ZSET_INCREMENT_SCORE);
 
 		if (this.extractPayloadElements) {
 
@@ -334,7 +335,7 @@ public class RedisCollectionPopulatingMessageHandler extends AbstractMessageHand
 							incrementOrOverwrite(ops, entry.getKey(), d == null ?
 									determineScore(message) :
 									NumberUtils.convertNumberToTargetClass(d, Double.class),
-									overWriteHeader);
+									zsetIncrementHeader);
 						}
 					}
 				});
@@ -343,17 +344,17 @@ public class RedisCollectionPopulatingMessageHandler extends AbstractMessageHand
 				this.processInPipeline(new PipelineCallback() {
 					public void process() {
 						for (Object object : ((Collection<?>)payload)) {
-							incrementOrOverwrite(ops, object, determineScore(message), overWriteHeader);
+							incrementOrOverwrite(ops, object, determineScore(message), zsetIncrementHeader);
 						}
 					}
 				});
 			}
 			else {
-				this.incrementOrOverwrite(ops, payload, this.determineScore(message), overWriteHeader);
+				this.incrementOrOverwrite(ops, payload, this.determineScore(message), zsetIncrementHeader);
 			}
 		}
 		else {
-			this.incrementOrOverwrite(ops, payload, this.determineScore(message), overWriteHeader);
+			this.incrementOrOverwrite(ops, payload, this.determineScore(message), zsetIncrementHeader);
 		}
 	}
 
@@ -453,9 +454,9 @@ public class RedisCollectionPopulatingMessageHandler extends AbstractMessageHand
 	}
 
 	private void incrementOrOverwrite(final BoundZSetOperations<String, Object> ops, Object object, Double score,
-			Object overWrite) {
-		boolean increment = overWrite == null || !(overWrite instanceof Boolean) ||
-				((Boolean) overWrite) == Boolean.FALSE;
+			Object zsetIncrementScore) {
+
+		boolean increment = Boolean.TRUE.equals(zsetIncrementScore);;
 		if (score != null) {
 			this.doIncrementOrOverwrite(ops, object, score, increment);
 		}
